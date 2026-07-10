@@ -2322,7 +2322,7 @@ export default function App() {
       for (const script of externalScripts) {
         await loadScript(script);
       }
-      await loadScript(selectedCity.scriptUrl);
+      await loadScript(resolveAssetUrl(selectedCity.scriptUrl));
 
       if (cancelled) {
         return;
