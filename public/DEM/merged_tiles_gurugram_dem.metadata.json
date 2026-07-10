@@ -1,0 +1,18 @@
+{
+  "source": "merged_tiles_gurugram_dem.tif",
+  "overlay": "merged_tiles_gurugram_dem_overlay.png",
+  "crs": "EPSG:4326",
+  "step": 8,
+  "bounds": {
+    "west": 76.87499841911111,
+    "south": 28.24999417777778,
+    "east": 77.24999601911111,
+    "north": 28.62499177777778
+  },
+  "statistics": {
+    "sampleMin": 187.0,
+    "sampleMax": 341.0,
+    "p2": 196.0,
+    "p98": 306.0
+  }
+}
