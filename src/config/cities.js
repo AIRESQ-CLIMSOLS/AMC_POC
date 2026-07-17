@@ -8,6 +8,10 @@ export const cityDashboards = [
     initFunction: 'initializeCityDashboard_gmc',
     loadingLabel: 'Ahmedabad',
     sourceLabel: 'Ahmedabad Municipal Corporation (AMC)',
+    initialView: {
+      center: [23.0225, 72.5714],
+      zoom: 11,
+    },
     defaultVisibleOverlays: ['Administrative / Boundaries | AMC Boundary'],
     initialFocusOverlay: 'Administrative / Boundaries | AMC Boundary',
     demOverlays: [

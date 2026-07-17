@@ -2561,6 +2561,34 @@ function focusOverlayBounds(api, overlayName) {
   }
 }
 
+function applyInitialCityView(api, cityConfig) {
+  if (!api?.map || !Array.isArray(cityConfig?.initialView?.center)) {
+    return;
+  }
+
+  const [latitude, longitude] = cityConfig.initialView.center;
+  const zoom = cityConfig.initialView.zoom ?? 11;
+
+  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+    api.map.setView([latitude, longitude], zoom, { animate: false });
+  }
+}
+
+function detachNativeLayerControl(api) {
+  if (!api?.map || !api?.layerControl) {
+    return;
+  }
+
+  if (typeof api.map.removeControl === 'function') {
+    api.map.removeControl(api.layerControl);
+  }
+
+  const controlContainer = api.layerControl.getContainer?.();
+  if (controlContainer) {
+    controlContainer.remove();
+  }
+}
+
 export default function App() {
   const [selectedCityId, setSelectedCityId] = useState(cityDashboards[0].id);
   const [loading, setLoading] = useState(true);
@@ -2674,6 +2702,8 @@ export default function App() {
       }
 
       mapApiRef.current = api;
+      applyInitialCityView(api, selectedCity);
+      detachNativeLayerControl(api);
       removedAdministrativeOverlayLabels.forEach((overlayLabel) => {
         removeOverlayEntry(api, overlayLabel);
       });
@@ -2693,7 +2723,6 @@ export default function App() {
       focusOverlayBounds(api, selectedCity.initialFocusOverlay);
       applyBasemapSelection(api, leafletBasemapLayersRef, basemapType);
       cleanupPopupSanitizer = attachPopupSanitizer(api);
-      document.querySelector('.leaflet-control-layers')?.classList.add('dashboard-native-layer-control');
       syncSections();
 
       api.map.on('overlayadd', syncSections);
