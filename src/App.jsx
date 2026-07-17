@@ -80,7 +80,7 @@ const administrativeBoundaryOverrideConfigs = [
   {
     cityId: 'gmc',
     label: 'Administrative / Boundaries | Ward Boundary',
-    url: '/administrative/Ahmedabad_wards.kml',
+    url: '/administrative/amc_wards_from_app.geojson',
     kind: 'ward',
   },
   {
@@ -769,6 +769,16 @@ function parseKmlToGeoJson(text) {
     type: 'FeatureCollection',
     features,
   };
+}
+
+function parseTextToGeoJson(url, text) {
+  const normalizedUrl = String(url || '').toLowerCase();
+
+  if (normalizedUrl.endsWith('.geojson') || normalizedUrl.endsWith('.json')) {
+    return JSON.parse(text);
+  }
+
+  return parseKmlToGeoJson(text);
 }
 
 function projectLngLatToMeters(longitude, latitude, latitudeReferenceRadians) {
@@ -2005,7 +2015,7 @@ async function initializeAdministrativeBoundaryOverrides(api, cityId) {
         throw new Error(`Could not load ${overlay.label}.`);
       }
 
-      geojsonCache.set(overlay.url, parseKmlToGeoJson(await response.text()));
+      geojsonCache.set(overlay.url, parseTextToGeoJson(overlay.url, await response.text()));
     }
 
     const wardGeojson = geojsonCache.get(overlay.url);
