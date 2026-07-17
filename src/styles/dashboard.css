@@ -547,6 +547,112 @@ input {
   cursor: not-allowed;
 }
 
+.dashboard-terrain-control {
+  position: absolute;
+  left: 20px;
+  bottom: 28px;
+  z-index: 650;
+  width: min(280px, calc(100% - 40px));
+  padding: 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(73, 135, 154, 0.18);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--dashboard-shadow-soft);
+  backdrop-filter: blur(12px);
+}
+
+.dashboard-terrain-control__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dashboard-terrain-control__eyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: rgba(79, 79, 81, 0.62);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.dashboard-terrain-control__header h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.dashboard-terrain-control__range {
+  color: rgba(79, 79, 81, 0.76);
+  font-size: 0.74rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.dashboard-terrain-control__legend {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 12px;
+  align-items: stretch;
+  margin-top: 14px;
+}
+
+.dashboard-terrain-control__ramp {
+  min-height: 180px;
+  border-radius: 999px;
+  border: 1px solid rgba(73, 135, 154, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.dashboard-terrain-control__ticks {
+  min-height: 180px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.dashboard-terrain-control__tick {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+}
+
+.dashboard-terrain-control__tick span {
+  color: var(--dashboard-text);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.dashboard-terrain-control__slider-shell {
+  display: block;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(73, 135, 154, 0.12);
+}
+
+.dashboard-terrain-control__slider-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: rgba(79, 79, 81, 0.72);
+  font-size: 0.78rem;
+}
+
+.dashboard-terrain-control__slider-meta strong {
+  color: #0f172a;
+  font-size: 0.82rem;
+}
+
+.dashboard-terrain-control__slider {
+  width: 100%;
+  accent-color: var(--dashboard-primary);
+}
+
 .dashboard-loading-screen {
   position: absolute;
   inset: 0;
@@ -1015,6 +1121,19 @@ input {
 
   .dashboard-map-toolbar__tab {
     flex: 1;
+  }
+
+  .dashboard-terrain-control {
+    left: 12px;
+    bottom: 12px;
+    width: min(260px, calc(100% - 24px));
+    padding: 12px;
+  }
+
+  .dashboard-terrain-control__legend,
+  .dashboard-terrain-control__ticks,
+  .dashboard-terrain-control__ramp {
+    min-height: 150px;
   }
 
   .dashboard-loading-screen {

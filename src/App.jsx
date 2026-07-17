@@ -87,13 +87,13 @@ const administrativeBoundaryOverrideConfigs = [
     cityId: 'gmc',
     label: 'Administrative / Boundaries | AMC Boundary',
     sourceLabel: 'Administrative / Boundaries | MCG Limit Boundary',
-    url: '/administrative/Ahmedabad_wards.kml',
+    url: '/administrative/amc_boundary_from_zone.geojson',
     kind: 'city-boundary',
   },
   {
     cityId: 'gmc',
     label: 'Administrative / Boundaries | Zone Boundary',
-    url: '/administrative/Ahmedabad_wards.kml',
+    url: '/administrative/amc_zone_boundary.geojson',
     kind: 'zone',
   },
 ];
@@ -202,11 +202,28 @@ const hydrologyOverlayConfigs = [
   {
     cityId: 'gmc',
     label: 'Hydrology | Lakes',
-    url: '/hydrology/lake-name.zip',
+    url: '/hydrology/ahmedabad_lake_pond.zip',
     color: '#0ea5e9',
     weight: 1.8,
     fillColor: '#7dd3fc',
     fillOpacity: 0.55,
+  },
+];
+
+const transportationOverlayConfigs = [
+  {
+    cityId: 'gmc',
+    label: 'Transportation | Rail',
+    url: '/transportation/ahmedabad_rail_2024.geojson',
+    color: '#475569',
+    weight: 3,
+  },
+  {
+    cityId: 'gmc',
+    label: 'Transportation | Roads',
+    url: '/transportation/ahmedabad_road_osm_2026.geojson',
+    color: '#f97316',
+    weight: 2.4,
   },
 ];
 
@@ -222,7 +239,8 @@ const removedAdministrativeOverlayLabels = [
 
 const removedDrainageOverlayPrefixes = ['Drainage |', 'SWMM Drainage |'];
 const removedHydrologyOverlayPrefixes = ['Hydrology |'];
-const removedDashboardOverlayPrefixes = ['Observations |', 'Transport |', 'Terrain |', 'Sensor |'];
+const removedTransportationOverlayPrefixes = ['Transportation |'];
+const removedDashboardOverlayPrefixes = ['Observations |', 'Transport |', 'Sensor |'];
 
 const zoneBoundaryDefinitions = [
   {
@@ -423,7 +441,77 @@ function enhanceObservationOverlays(api) {
   });
 }
 
-async function initializeDemOverlay(api, demOverlayConfig) {
+function formatDemLegendValue(value) {
+  if (!Number.isFinite(value)) {
+    return '';
+  }
+
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function buildDemLegend(config) {
+  const legendStops = Array.isArray(config?.legendStops)
+    ? config.legendStops
+        .filter((stop) => Number.isFinite(stop?.value) && stop?.color)
+        .sort((left, right) => left.value - right.value)
+    : [];
+
+  if (legendStops.length === 0) {
+    return null;
+  }
+
+  const minValue = legendStops[0].value;
+  const maxValue = legendStops[legendStops.length - 1].value;
+  const range = maxValue - minValue || 1;
+  const unitsSuffix = config?.legendUnits ? ` ${config.legendUnits}` : '';
+  const gradientStops = legendStops.map((stop) => {
+    const position = ((stop.value - minValue) / range) * 100;
+    return `${stop.color} ${position}%`;
+  });
+
+  return {
+    title: config?.legendTitle ?? config?.label?.replace(/^Terrain\s*\|\s*/i, '') ?? 'DEM',
+    minLabel: `${formatDemLegendValue(minValue)}${unitsSuffix}`,
+    maxLabel: `${formatDemLegendValue(maxValue)}${unitsSuffix}`,
+    gradient: `linear-gradient(to top, ${gradientStops.join(', ')})`,
+    stops: legendStops
+      .slice()
+      .reverse()
+      .map((stop) => ({
+        value: stop.value,
+        label: `${formatDemLegendValue(stop.value)}${unitsSuffix}`,
+      })),
+  };
+}
+
+function setDemOverlayOpacity(demOverlayStoreRef, opacity) {
+  demOverlayStoreRef.current.byLabel.forEach(({ layer }) => {
+    if (typeof layer?.setOpacity === 'function') {
+      layer.setOpacity(opacity);
+    }
+  });
+}
+
+function getVisibleDemLegend(api, demOverlayStoreRef) {
+  if (!api?.map) {
+    return null;
+  }
+
+  const visibleLabels = demOverlayStoreRef.current.labels.filter((label) => {
+    const overlayEntry = demOverlayStoreRef.current.byLabel.get(label);
+    return overlayEntry?.layer && api.map.hasLayer(overlayEntry.layer);
+  });
+
+  if (visibleLabels.length === 0) {
+    return null;
+  }
+
+  const activeLabel = visibleLabels[visibleLabels.length - 1];
+  const activeOverlay = demOverlayStoreRef.current.byLabel.get(activeLabel);
+  return buildDemLegend(activeOverlay?.config);
+}
+
+async function initializeDemOverlay(api, demOverlayConfig, demOverlayStoreRef, defaultOpacity = 0.72) {
   if (!api?.map || !window.L) {
     return null;
   }
@@ -436,6 +524,14 @@ async function initializeDemOverlay(api, demOverlayConfig) {
     (entry) => entry?.overlay && entry.name === demOverlayConfig.label,
   );
   if (existingEntry) {
+    demOverlayStoreRef.current.byLabel.set(demOverlayConfig.label, {
+      config: demOverlayConfig,
+      layer: existingEntry.layer,
+      metadata: null,
+    });
+    if (!demOverlayStoreRef.current.labels.includes(demOverlayConfig.label)) {
+      demOverlayStoreRef.current.labels.push(demOverlayConfig.label);
+    }
     return existingEntry.layer;
   }
 
@@ -460,13 +556,39 @@ async function initializeDemOverlay(api, demOverlayConfig) {
 
   const demLayer = window.L.imageOverlay(demOverlayConfig.imageUrl, bounds, {
     pane: paneName,
-    opacity: 0.72,
+    opacity: defaultOpacity,
     interactive: false,
     className: 'dem-overlay-image',
   });
 
   api.layerControl.addOverlay(demLayer, demOverlayConfig.label);
+  demOverlayStoreRef.current.byLabel.set(demOverlayConfig.label, {
+    config: demOverlayConfig,
+    layer: demLayer,
+    metadata,
+  });
+  if (!demOverlayStoreRef.current.labels.includes(demOverlayConfig.label)) {
+    demOverlayStoreRef.current.labels.push(demOverlayConfig.label);
+  }
   return demLayer;
+}
+
+async function initializeDemOverlays(api, demOverlayConfigs, demOverlayStoreRef, defaultOpacity = 0.72) {
+  const configs = Array.isArray(demOverlayConfigs)
+    ? demOverlayConfigs
+    : demOverlayConfigs
+      ? [demOverlayConfigs]
+      : [];
+
+  const createdLayers = [];
+  for (const config of configs) {
+    const layer = await initializeDemOverlay(api, config, demOverlayStoreRef, defaultOpacity);
+    if (layer) {
+      createdLayers.push(layer);
+    }
+  }
+
+  return createdLayers;
 }
 
 async function initializeGoogleBasemap(containerId) {
@@ -538,6 +660,18 @@ function ensureLeafletBasemapLayers(api, basemapStoreRef) {
     return;
   }
 
+  if (!basemapStoreRef.current.satellite) {
+    basemapStoreRef.current.satellite = window.L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        attribution: 'Tiles &copy; Esri',
+        maxZoom: 20,
+        keepBuffer: 8,
+        updateWhenIdle: false,
+      },
+    );
+  }
+
   if (!basemapStoreRef.current.cartodb && api.baseTileLayer) {
     basemapStoreRef.current.cartodb = api.baseTileLayer;
     Object.assign(basemapStoreRef.current.cartodb.options, {
@@ -559,28 +693,28 @@ function ensureLeafletBasemapLayers(api, basemapStoreRef) {
   }
 }
 
-function applyBasemapSelection(api, basemapStoreRef, basemapType, googleMap) {
+function applyBasemapSelection(api, basemapStoreRef, basemapType) {
   if (!api?.map) {
     return;
   }
 
   ensureLeafletBasemapLayers(api, basemapStoreRef);
 
+  const satelliteLayer = basemapStoreRef.current.satellite;
   const cartodbLayer = basemapStoreRef.current.cartodb;
   const osmLayer = basemapStoreRef.current.osm;
-  [cartodbLayer, osmLayer].forEach((layer) => {
+  [satelliteLayer, cartodbLayer, osmLayer].forEach((layer) => {
     if (layer && api.map.hasLayer(layer)) {
       api.map.removeLayer(layer);
     }
   });
 
-  if (basemapType === 'satellite' && googleMap) {
-    setGoogleBasemapContainerVisible(true);
-    googleMap.setMapTypeId('satellite');
+  setGoogleBasemapContainerVisible(false);
+
+  if (basemapType === 'satellite') {
+    satelliteLayer?.addTo(api.map);
     return;
   }
-
-  setGoogleBasemapContainerVisible(false);
 
   if (basemapType === 'cartodb') {
     cartodbLayer?.addTo(api.map);
@@ -781,6 +915,11 @@ function parseTextToGeoJson(url, text) {
   return parseKmlToGeoJson(text);
 }
 
+function isGeoJsonUrl(url) {
+  const normalizedUrl = String(url || '').toLowerCase();
+  return normalizedUrl.endsWith('.geojson') || normalizedUrl.endsWith('.json');
+}
+
 function projectLngLatToMeters(longitude, latitude, latitudeReferenceRadians) {
   const earthRadiusMeters = 6371008.8;
   const longitudeRadians = (longitude * Math.PI) / 180;
@@ -847,13 +986,128 @@ function calculateGeometryAreaSquareKilometers(geometry) {
   return areaSquareMeters / 1_000_000;
 }
 
+function cleanBoundaryRingCoordinates(ringCoordinates = []) {
+  const cleanedCoordinates = ringCoordinates
+    .filter((coordinate) => Array.isArray(coordinate) && Number.isFinite(coordinate[0]) && Number.isFinite(coordinate[1]))
+    .map(([longitude, latitude]) => [longitude, latitude]);
+
+  if (cleanedCoordinates.length === 0) {
+    return [];
+  }
+
+  const deduplicatedCoordinates = cleanedCoordinates.filter((coordinate, index) => {
+    if (index === 0) {
+      return true;
+    }
+
+    const previous = cleanedCoordinates[index - 1];
+    return coordinate[0] !== previous[0] || coordinate[1] !== previous[1];
+  });
+
+  if (deduplicatedCoordinates.length === 0) {
+    return [];
+  }
+
+  const firstCoordinate = deduplicatedCoordinates[0];
+  const lastCoordinate = deduplicatedCoordinates[deduplicatedCoordinates.length - 1];
+  if (firstCoordinate[0] !== lastCoordinate[0] || firstCoordinate[1] !== lastCoordinate[1]) {
+    deduplicatedCoordinates.push([...firstCoordinate]);
+  }
+
+  return deduplicatedCoordinates.length >= 4 ? deduplicatedCoordinates : [];
+}
+
+function cleanBoundaryGeometry(geometry) {
+  if (!geometry) {
+    return null;
+  }
+
+  if (geometry.type === 'Polygon') {
+    const cleanedOuterRing = cleanBoundaryRingCoordinates(geometry.coordinates?.[0] ?? []);
+    if (cleanedOuterRing.length === 0) {
+      return null;
+    }
+
+    const cleanedPolygon = {
+      type: 'Polygon',
+      coordinates: [cleanedOuterRing],
+    };
+
+    return calculateGeometryAreaSquareKilometers(cleanedPolygon) > 0.5 ? cleanedPolygon : null;
+  }
+
+  if (geometry.type === 'MultiPolygon') {
+    const cleanedPolygons = geometry.coordinates
+      .map((polygonCoordinates) => {
+        const cleanedOuterRing = cleanBoundaryRingCoordinates(polygonCoordinates?.[0] ?? []);
+        if (cleanedOuterRing.length === 0) {
+          return null;
+        }
+
+        const cleanedPolygon = {
+          type: 'Polygon',
+          coordinates: [cleanedOuterRing],
+        };
+
+        return calculateGeometryAreaSquareKilometers(cleanedPolygon) > 0.5 ? [cleanedOuterRing] : null;
+      })
+      .filter(Boolean);
+
+    if (cleanedPolygons.length === 0) {
+      return null;
+    }
+
+    if (cleanedPolygons.length === 1) {
+      return {
+        type: 'Polygon',
+        coordinates: cleanedPolygons[0],
+      };
+    }
+
+    return {
+      type: 'MultiPolygon',
+      coordinates: cleanedPolygons,
+    };
+  }
+
+  return geometry;
+}
+
+function cleanAdministrativeBoundaryGeoJson(geojson) {
+  const features = Array.isArray(geojson?.features) ? geojson.features : [];
+
+  return {
+    ...geojson,
+    features: features
+      .map((feature) => {
+        const cleanedGeometry = cleanBoundaryGeometry(feature?.geometry);
+        if (!cleanedGeometry) {
+          return null;
+        }
+
+        return {
+          ...feature,
+          geometry: cleanedGeometry,
+        };
+      })
+      .filter(Boolean),
+  };
+}
+
 function buildWardBoundaryPopupContent(feature) {
   const properties = feature?.properties ?? {};
   const areaSquareKilometers = calculateGeometryAreaSquareKilometers(feature?.geometry);
+  const formattedWardName = String(
+    properties.Name || properties.Ward_Name || properties.sourcewardname || properties.ward_lgd_name || properties.name || 'Unknown',
+  )
+    .replace(/^\d+[_\s-]*/, '')
+    .replace(/_/g, ' ')
+    .trim();
 
   return buildFeatureInfoTable({
-    'Ward Name': properties.sourcewardname || properties.ward_lgd_name || properties.name || 'Unknown',
-    'Ward Number': properties.sourcewardcode || 'Unknown',
+    'Ward Name': formattedWardName || 'Unknown',
+    'Ward Number': properties.Ward_No || properties.sourcewardcode || 'Unknown',
+    'Zone Name': properties.Zone_Name || properties.zone_name || 'Unknown',
     'Area (km2)': areaSquareKilometers > 0 ? areaSquareKilometers.toFixed(2) : '0.00',
   });
 }
@@ -950,16 +1204,21 @@ function buildZoneBoundaryGeoJson(wardGeojson) {
   };
 }
 
-function buildAmcBoundaryGeoJson(wardGeojson) {
-  const wardFeatures = Array.isArray(wardGeojson?.features) ? wardGeojson.features : [];
-  if (wardFeatures.length === 0) {
+function buildAmcBoundaryGeoJson(sourceGeojson) {
+  const sourceFeatures = Array.isArray(sourceGeojson?.features) ? sourceGeojson.features : [];
+  if (sourceFeatures.length === 0) {
     return { type: 'FeatureCollection', features: [] };
   }
 
-  const dissolvedFeature = unionZoneFeatures(wardFeatures);
+  const dissolvedFeature = unionZoneFeatures(sourceFeatures);
   if (!dissolvedFeature?.geometry) {
     return { type: 'FeatureCollection', features: [] };
   }
+
+  const isZoneBoundarySource = sourceFeatures.some((feature) => {
+    const properties = feature?.properties ?? {};
+    return properties.zone_amc || properties.zone_name;
+  });
 
   return {
     type: 'FeatureCollection',
@@ -968,7 +1227,9 @@ function buildAmcBoundaryGeoJson(wardGeojson) {
         type: 'Feature',
         properties: {
           boundary_name: 'AMC Boundary',
-          ward_count: wardFeatures.length,
+          ...(isZoneBoundarySource
+            ? { zone_count: sourceFeatures.length }
+            : { ward_count: sourceFeatures.length }),
         },
         geometry: dissolvedFeature.geometry,
       },
@@ -1023,46 +1284,59 @@ function getZoneBoundaryLayerStyle(isSelected = false) {
 function buildZoneBoundaryPopupContent(feature) {
   const properties = feature?.properties ?? {};
   const areaSquareKilometers = calculateGeometryAreaSquareKilometers(feature?.geometry);
-
-  return buildFeatureInfoTable({
-    'Zone Name': properties.zone_name || 'Unknown',
-    'Ward Count': properties.ward_count || 0,
-    Wards: properties.wards || '',
+  const popupProperties = {
+    'Zone Name': properties.zone_name || properties.zone_amc || 'Unknown',
     'Area (km2)': areaSquareKilometers > 0 ? areaSquareKilometers.toFixed(2) : '0.00',
-  });
+  };
+
+  if (properties.ward_count != null && properties.ward_count !== '') {
+    popupProperties['Ward Count'] = properties.ward_count;
+  }
+
+  if (properties.wards) {
+    popupProperties.Wards = properties.wards;
+  }
+
+  return buildFeatureInfoTable(popupProperties);
 }
 
 function getAmcBoundaryLayerStyle(isSelected = false) {
   if (isSelected) {
     return {
-      color: '#b91c1c',
+      color: '#0f766e',
       weight: 4,
       opacity: 1,
       fill: true,
-      fillColor: '#fca5a5',
-      fillOpacity: 0.14,
+      fillColor: '#99f6e4',
+      fillOpacity: 0.12,
     };
   }
 
   return {
-    color: '#111827',
-    weight: 3,
-    opacity: 0.98,
+    color: '#0d9488',
+    weight: 3.25,
+    opacity: 1,
     fill: true,
-    fillColor: '#111827',
-    fillOpacity: 0.03,
+    fillColor: '#99f6e4',
+    fillOpacity: 0.04,
   };
 }
 
 function buildAmcBoundaryPopupContent(feature) {
   const properties = feature?.properties ?? {};
   const areaSquareKilometers = calculateGeometryAreaSquareKilometers(feature?.geometry);
-
-  return buildFeatureInfoTable({
+  const popupProperties = {
     'Boundary Name': properties.boundary_name || 'AMC Boundary',
-    'Ward Count': properties.ward_count || 0,
     'Area (km2)': areaSquareKilometers > 0 ? areaSquareKilometers.toFixed(2) : '0.00',
-  });
+  };
+
+  if (properties.zone_count != null && properties.zone_count !== '') {
+    popupProperties['Zone Count'] = properties.zone_count;
+  } else if (properties.ward_count != null && properties.ward_count !== '') {
+    popupProperties['Ward Count'] = properties.ward_count;
+  }
+
+  return buildFeatureInfoTable(popupProperties);
 }
 
 function getTimeSeriesValue(properties, key, index) {
@@ -1849,13 +2123,42 @@ function createPointSymbolOverlayLayer(overlay, geojson) {
   return markerLayer;
 }
 
-async function initializeDrainageNetworkOverlays(api, cityId) {
-  if (!api?.map || !api?.layerControl || !window.L) {
-    return [];
+async function fetchVectorOverlayGeoJson(overlay) {
+  const response = await fetch(resolveAssetUrl(overlay.url));
+  if (!response.ok) {
+    throw new Error(`Could not load ${overlay.label}.`);
+  }
+
+  if (isGeoJsonUrl(overlay.url)) {
+    return normalizeShapefileGeoJson(await response.json());
   }
 
   if (typeof window.shp !== 'function') {
     throw new Error('Shapefile loader could not be initialized.');
+  }
+
+  const parsed = await window.shp(await response.arrayBuffer());
+  return normalizeShapefileGeoJson(parsed);
+}
+
+function createVectorOverlayLayer(overlay, geojson) {
+  return overlay.renderAsPoint
+    ? createPointSymbolOverlayLayer(overlay, geojson)
+    : window.L.geoJSON(geojson, {
+        style: (feature) => getShapefileOverlayStyle(overlay, feature?.geometry?.type),
+        pointToLayer: (_feature, latlng) => createShapefilePointMarker(overlay, latlng),
+        onEachFeature: (feature, featureLayer) => {
+          featureLayer.bindPopup(buildOverlayPopupContent(overlay, feature), {
+            maxWidth: 360,
+            className: 'foliumpopup',
+          });
+        },
+      });
+}
+
+async function initializeDrainageNetworkOverlays(api, cityId) {
+  if (!api?.map || !api?.layerControl || !window.L) {
+    return [];
   }
 
   const applicableOverlays = drainageNetworkOverlayConfigs.filter((overlay) => overlay.cityId === cityId);
@@ -1875,25 +2178,8 @@ async function initializeDrainageNetworkOverlays(api, cityId) {
       continue;
     }
 
-    const response = await fetch(resolveAssetUrl(overlay.url));
-    if (!response.ok) {
-      throw new Error(`Could not load ${overlay.label}.`);
-    }
-
-    const parsed = await window.shp(await response.arrayBuffer());
-    const geojson = normalizeShapefileGeoJson(parsed);
-    const layer = overlay.renderAsPoint
-      ? createPointSymbolOverlayLayer(overlay, geojson)
-      : window.L.geoJSON(geojson, {
-          style: (feature) => getShapefileOverlayStyle(overlay, feature?.geometry?.type),
-          pointToLayer: (_feature, latlng) => createShapefilePointMarker(overlay, latlng),
-          onEachFeature: (feature, featureLayer) => {
-            featureLayer.bindPopup(buildOverlayPopupContent(overlay, feature), {
-              maxWidth: 360,
-              className: 'foliumpopup',
-            });
-          },
-        });
+    const geojson = await fetchVectorOverlayGeoJson(overlay);
+    const layer = createVectorOverlayLayer(overlay, geojson);
 
     api.layerControl.addOverlay(layer, overlay.label);
     if (hadVisibleLayer) {
@@ -1909,10 +2195,6 @@ async function initializeDrainageNetworkOverlays(api, cityId) {
 async function initializeHydrologyOverlays(api, cityId) {
   if (!api?.map || !api?.layerControl || !window.L) {
     return [];
-  }
-
-  if (typeof window.shp !== 'function') {
-    throw new Error('Shapefile loader could not be initialized.');
   }
 
   const applicableOverlays = hydrologyOverlayConfigs.filter((overlay) => overlay.cityId === cityId);
@@ -1932,23 +2214,44 @@ async function initializeHydrologyOverlays(api, cityId) {
       continue;
     }
 
-    const response = await fetch(resolveAssetUrl(overlay.url));
-    if (!response.ok) {
-      throw new Error(`Could not load ${overlay.label}.`);
+    const geojson = await fetchVectorOverlayGeoJson(overlay);
+    const layer = createVectorOverlayLayer(overlay, geojson);
+
+    api.layerControl.addOverlay(layer, overlay.label);
+    if (hadVisibleLayer) {
+      api.map.addLayer(layer);
     }
 
-    const parsed = await window.shp(await response.arrayBuffer());
-    const geojson = normalizeShapefileGeoJson(parsed);
-    const layer = window.L.geoJSON(geojson, {
-      style: (feature) => getShapefileOverlayStyle(overlay, feature?.geometry?.type),
-      pointToLayer: (_feature, latlng) => createShapefilePointMarker(overlay, latlng),
-      onEachFeature: (feature, featureLayer) => {
-        featureLayer.bindPopup(buildOverlayPopupContent(overlay, feature), {
-          maxWidth: 360,
-          className: 'foliumpopup',
-        });
-      },
-    });
+    createdLayers.push(layer);
+  }
+
+  return createdLayers;
+}
+
+async function initializeTransportationOverlays(api, cityId) {
+  if (!api?.map || !api?.layerControl || !window.L) {
+    return [];
+  }
+
+  const applicableOverlays = transportationOverlayConfigs.filter((overlay) => overlay.cityId === cityId);
+  if (applicableOverlays.length === 0) {
+    return [];
+  }
+
+  const { hadVisibleLayer } = removeOverlayEntriesByPrefix(api, removedTransportationOverlayPrefixes);
+  const createdLayers = [];
+
+  for (const overlay of applicableOverlays) {
+    const existingEntry = Object.values(api.layerControl?._layers ?? {}).find(
+      (entry) => entry?.overlay && entry.name === overlay.label,
+    );
+    if (existingEntry?.layer) {
+      createdLayers.push(existingEntry.layer);
+      continue;
+    }
+
+    const geojson = await fetchVectorOverlayGeoJson(overlay);
+    const layer = createVectorOverlayLayer(overlay, geojson);
 
     api.layerControl.addOverlay(layer, overlay.label);
     if (hadVisibleLayer) {
@@ -1963,10 +2266,23 @@ async function initializeHydrologyOverlays(api, cityId) {
 
 function getAdministrativeOverlayGeoJson(overlay, wardGeojson) {
   if (overlay.kind === 'zone') {
+    if (isGeoJsonUrl(overlay.url)) {
+      return wardGeojson;
+    }
     return buildZoneBoundaryGeoJson(wardGeojson);
   }
 
   if (overlay.kind === 'city-boundary') {
+    if (isGeoJsonUrl(overlay.url)) {
+      const sourceFeatures = Array.isArray(wardGeojson?.features) ? wardGeojson.features : [];
+      const hasDirectBoundaryFeature =
+        sourceFeatures.length === 1 && Boolean(sourceFeatures[0]?.properties?.boundary_name);
+
+      if (hasDirectBoundaryFeature) {
+        return cleanAdministrativeBoundaryGeoJson(wardGeojson);
+      }
+    }
+
     return buildAmcBoundaryGeoJson(wardGeojson);
   }
 
@@ -2028,7 +2344,7 @@ async function initializeAdministrativeBoundaryOverrides(api, cityId) {
       style: () => getAdministrativeOverlayStyle(overlay, false),
       onEachFeature: (feature, featureLayer) => {
         if (overlay.kind === 'zone') {
-          const zoneName = feature?.properties?.zone_name;
+          const zoneName = feature?.properties?.zone_name || feature?.properties?.zone_amc;
           if (zoneName) {
             featureLayer.bindTooltip(zoneName, {
               permanent: true,
@@ -2261,10 +2577,11 @@ export default function App() {
   const [swmmTimeIndex, setSwmmTimeIndex] = useState(0);
   const [selectedSwmmFeature, setSelectedSwmmFeature] = useState(null);
   const [basemapType, setBasemapType] = useState('osm');
-  const [googleBasemapEnabled, setGoogleBasemapEnabled] = useState(false);
+  const [demOpacity, setDemOpacity] = useState(0.72);
+  const [terrainLegend, setTerrainLegend] = useState(null);
   const mapApiRef = useRef(null);
-  const googleMapRef = useRef(null);
-  const leafletBasemapLayersRef = useRef({ osm: null, cartodb: null });
+  const leafletBasemapLayersRef = useRef({ satellite: null, osm: null, cartodb: null });
+  const demOverlayStoreRef = useRef({ byLabel: new Map(), labels: [] });
   const collapsedMapRef = useRef({});
   const swmmTimeseriesLayersRef = useRef({ cityId: null, loaded: false, loadPromise: null, layers: {}, timeLabels: [] });
   const swmmFeatureSelectCallbackRef = useRef(null);
@@ -2285,6 +2602,15 @@ export default function App() {
     setSections(buildSections(mapApiRef.current, collapsedMapRef.current));
   };
 
+  const refreshDashboardUi = () => {
+    if (!mapApiRef.current) {
+      return;
+    }
+
+    refreshSections();
+    setTerrainLegend(getVisibleDemLegend(mapApiRef.current, demOverlayStoreRef));
+  };
+
   useEffect(() => {
     collapsedMapRef.current = collapsedMap;
   }, [collapsedMap]);
@@ -2300,14 +2626,16 @@ export default function App() {
     setSwmmTimeLabels([]);
     setSwmmTimeIndex(0);
     setSelectedSwmmFeature(null);
+    setDemOpacity(0.72);
+    setTerrainLegend(null);
     previousSelectedSwmmFeatureRef.current = null;
     activeSwmmPopupLayerRef.current = null;
+    demOverlayStoreRef.current = { byLabel: new Map(), labels: [] };
     setLoading(true);
   }, [selectedCityId]);
 
   useEffect(() => {
     let cancelled = false;
-    let cleanupSync = null;
     let cleanupPopupSanitizer = null;
 
     const syncSections = () => {
@@ -2315,7 +2643,7 @@ export default function App() {
         return;
       }
 
-      refreshSections();
+      refreshDashboardUi();
     };
 
     const initialize = async () => {
@@ -2354,36 +2682,24 @@ export default function App() {
       await initializeAdministrativeBoundaryOverrides(api, selectedCity.id);
       await initializeDrainageNetworkOverlays(api, selectedCity.id);
       await initializeHydrologyOverlays(api, selectedCity.id);
+      await initializeTransportationOverlays(api, selectedCity.id);
+      await initializeDemOverlays(
+        api,
+        selectedCity.demOverlays ?? selectedCity.demOverlay,
+        demOverlayStoreRef,
+        demOpacity,
+      );
       ensureDefaultVisibleOverlays(api, selectedCity.defaultVisibleOverlays);
       focusOverlayBounds(api, selectedCity.initialFocusOverlay);
-      applyBasemapSelection(api, leafletBasemapLayersRef, basemapType, null);
+      applyBasemapSelection(api, leafletBasemapLayersRef, basemapType);
       cleanupPopupSanitizer = attachPopupSanitizer(api);
       document.querySelector('.leaflet-control-layers')?.classList.add('dashboard-native-layer-control');
       syncSections();
 
       api.map.on('overlayadd', syncSections);
       api.map.on('overlayremove', syncSections);
-
-      try {
-        setLoadingMessage(`Connecting Google Maps basemap for ${selectedCity.loadingLabel}...`);
-        const googleMap = await initializeGoogleBasemap('gmc-google-basemap');
-        if (cancelled) {
-          return;
-        }
-
-        googleMapRef.current = googleMap;
-        setGoogleBasemapEnabled(true);
-        applyBasemapSelection(api, leafletBasemapLayersRef, basemapType, googleMap);
-        cleanupSync = syncGoogleBasemap(api.map, googleMap);
-      } catch (googleError) {
-        console.error(googleError);
-        setGoogleBasemapEnabled(false);
-        if (basemapType === 'satellite') {
-          setError(
-            'Google Maps satellite basemap is not active yet. Check VITE_GOOGLE_MAPS_API_KEY in .env and make sure no browser extension is blocking Google Maps requests.',
-          );
-        }
-      }
+      api.map.on('layeradd', syncSections);
+      api.map.on('layerremove', syncSections);
 
       setLoadingMessage(`Finalizing ${selectedCity.loadingLabel} map frame...`);
       setLoading(false);
@@ -2397,11 +2713,12 @@ export default function App() {
 
     return () => {
       cancelled = true;
-      cleanupSync?.();
       cleanupPopupSanitizer?.();
       if (mapApiRef.current?.map) {
         mapApiRef.current.map.off('overlayadd', syncSections);
         mapApiRef.current.map.off('overlayremove', syncSections);
+        mapApiRef.current.map.off('layeradd', syncSections);
+        mapApiRef.current.map.off('layerremove', syncSections);
       }
       if (mapApiRef.current?.map) {
         mapApiRef.current.map.remove();
@@ -2409,9 +2726,8 @@ export default function App() {
       }
       cleanupSwmmTimeseriesLayers(mapApiRef.current, swmmTimeseriesLayersRef);
       activeSwmmPopupLayerRef.current = null;
-      googleMapRef.current = null;
-      leafletBasemapLayersRef.current = { osm: null, cartodb: null };
-      setGoogleBasemapEnabled(false);
+      leafletBasemapLayersRef.current = { satellite: null, osm: null, cartodb: null };
+      demOverlayStoreRef.current = { byLabel: new Map(), labels: [] };
     };
   }, [selectedCity]);
 
@@ -2424,9 +2740,8 @@ export default function App() {
       mapApiRef.current,
       leafletBasemapLayersRef,
       basemapType,
-      googleBasemapEnabled ? googleMapRef.current : null,
     );
-  }, [basemapType, googleBasemapEnabled]);
+  }, [basemapType]);
 
   useEffect(() => {
     if (!mapApiRef.current?.map) {
@@ -2439,6 +2754,10 @@ export default function App() {
 
     return () => window.clearTimeout(timeout);
   }, [infoSidebarOpen, layerSidebarOpen]);
+
+  useEffect(() => {
+    setDemOverlayOpacity(demOverlayStoreRef, demOpacity);
+  }, [demOpacity]);
 
   useEffect(() => {
     if (!mapApiRef.current?.map || !swmmTimeseriesLayersRef.current.loaded) {
@@ -2498,7 +2817,7 @@ export default function App() {
       }
     }
 
-    refreshSections();
+    refreshDashboardUi();
   };
 
   const handleUntickAll = () => {
@@ -2513,7 +2832,7 @@ export default function App() {
       }
     });
 
-    refreshSections();
+    refreshDashboardUi();
   };
 
   const handleToggleSection = (sectionName) => {
@@ -2672,7 +2991,9 @@ export default function App() {
           loadingMessage={loadingMessage}
           basemapType={basemapType}
           onBasemapChange={setBasemapType}
-          googleBasemapEnabled={googleBasemapEnabled}
+          terrainLegend={terrainLegend}
+          demOpacity={demOpacity}
+          onDemOpacityChange={setDemOpacity}
         />
         {error && <div className="dashboard-error-banner">{error}</div>}
       </main>

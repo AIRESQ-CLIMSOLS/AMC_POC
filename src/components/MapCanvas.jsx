@@ -34,7 +34,9 @@ export default function MapCanvas({
   loadingMessage,
   basemapType,
   onBasemapChange,
-  googleBasemapEnabled,
+  terrainLegend,
+  demOpacity,
+  onDemOpacityChange,
 }) {
   return (
     <section className="dashboard-map-panel">
@@ -57,7 +59,6 @@ export default function MapCanvas({
                     basemapType === option.value ? ' is-active' : ''
                   }`}
                   onClick={() => onBasemapChange(option.value)}
-                  disabled={option.value === 'satellite' && !googleBasemapEnabled}
                 >
                   {option.label}
                 </button>
@@ -65,6 +66,50 @@ export default function MapCanvas({
             </div>
           </div>
         </div>
+        {terrainLegend && (
+          <div className="dashboard-terrain-control">
+            <div className="dashboard-terrain-control__header">
+              <div>
+                <span className="dashboard-terrain-control__eyebrow">Terrain</span>
+                <h3>{terrainLegend.title}</h3>
+              </div>
+              <span className="dashboard-terrain-control__range">
+                {terrainLegend.minLabel} - {terrainLegend.maxLabel}
+              </span>
+            </div>
+
+            <div className="dashboard-terrain-control__legend">
+              <div
+                className="dashboard-terrain-control__ramp"
+                style={{ background: terrainLegend.gradient }}
+                aria-hidden="true"
+              />
+              <div className="dashboard-terrain-control__ticks">
+                {terrainLegend.stops.map((stop) => (
+                  <div key={`${terrainLegend.title}-${stop.value}`} className="dashboard-terrain-control__tick">
+                    <span>{stop.label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <label className="dashboard-terrain-control__slider-shell">
+              <div className="dashboard-terrain-control__slider-meta">
+                <span>Opacity</span>
+                <strong>{Math.round(demOpacity * 100)}%</strong>
+              </div>
+              <input
+                type="range"
+                min="0.15"
+                max="1"
+                step="0.05"
+                value={demOpacity}
+                className="dashboard-terrain-control__slider"
+                onChange={(event) => onDemOpacityChange(Number(event.target.value))}
+              />
+            </label>
+          </div>
+        )}
         {loading && <LoadingScreen message={loadingMessage} />}
       </div>
     </section>

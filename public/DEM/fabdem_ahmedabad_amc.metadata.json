@@ -1,0 +1,11 @@
+{
+  "source": "fabdem_ahmedabad_amc_clipped.tif",
+  "overlay": "fabdem_ahmedabad_amc_overlay.png",
+  "crs": "EPSG:4326",
+  "bounds": {
+    "west": 72.4370833,
+    "south": 22.9145833,
+    "east": 72.7284722,
+    "north": 23.1406944
+  }
+}

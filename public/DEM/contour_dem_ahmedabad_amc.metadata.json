@@ -1,0 +1,11 @@
+{
+  "source": "contour_dem_ahmedabad_amc_clipped.tif",
+  "overlay": "contour_dem_ahmedabad_amc_overlay.png",
+  "crs": "EPSG:4326",
+  "bounds": {
+    "west": 72.4348883,
+    "south": 22.9123349,
+    "east": 72.7311817,
+    "north": 23.1438777
+  }
+}
