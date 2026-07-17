@@ -511,7 +511,7 @@ function getVisibleDemLegend(api, demOverlayStoreRef) {
   return buildDemLegend(activeOverlay?.config);
 }
 
-async function initializeDemOverlay(api, demOverlayConfig, demOverlayStoreRef, defaultOpacity = 0.72) {
+async function initializeDemOverlay(api, demOverlayConfig, demOverlayStoreRef, overlayRegistryRef, defaultOpacity = 0.72) {
   if (!api?.map || !window.L) {
     return null;
   }
@@ -524,6 +524,7 @@ async function initializeDemOverlay(api, demOverlayConfig, demOverlayStoreRef, d
     (entry) => entry?.overlay && entry.name === demOverlayConfig.label,
   );
   if (existingEntry) {
+    registerOverlayEntry(overlayRegistryRef, demOverlayConfig.label, existingEntry.layer);
     demOverlayStoreRef.current.byLabel.set(demOverlayConfig.label, {
       config: demOverlayConfig,
       layer: existingEntry.layer,
@@ -562,6 +563,7 @@ async function initializeDemOverlay(api, demOverlayConfig, demOverlayStoreRef, d
   });
 
   api.layerControl.addOverlay(demLayer, demOverlayConfig.label);
+  registerOverlayEntry(overlayRegistryRef, demOverlayConfig.label, demLayer);
   demOverlayStoreRef.current.byLabel.set(demOverlayConfig.label, {
     config: demOverlayConfig,
     layer: demLayer,
@@ -573,7 +575,7 @@ async function initializeDemOverlay(api, demOverlayConfig, demOverlayStoreRef, d
   return demLayer;
 }
 
-async function initializeDemOverlays(api, demOverlayConfigs, demOverlayStoreRef, defaultOpacity = 0.72) {
+async function initializeDemOverlays(api, demOverlayConfigs, demOverlayStoreRef, overlayRegistryRef, defaultOpacity = 0.72) {
   const configs = Array.isArray(demOverlayConfigs)
     ? demOverlayConfigs
     : demOverlayConfigs
@@ -582,7 +584,7 @@ async function initializeDemOverlays(api, demOverlayConfigs, demOverlayStoreRef,
 
   const createdLayers = [];
   for (const config of configs) {
-    const layer = await initializeDemOverlay(api, config, demOverlayStoreRef, defaultOpacity);
+    const layer = await initializeDemOverlay(api, config, demOverlayStoreRef, overlayRegistryRef, defaultOpacity);
     if (layer) {
       createdLayers.push(layer);
     }
@@ -1871,10 +1873,12 @@ async function initializeSwmmOverlays(api, cityId) {
   return createdLayers;
 }
 
-function removeOverlayEntry(api, overlayLabel) {
-  const existingEntry = Object.values(api?.layerControl?._layers ?? {}).find(
-    (entry) => entry?.overlay && entry.name === overlayLabel,
-  );
+function removeOverlayEntry(api, overlayLabel, overlayRegistryRef) {
+  const existingEntry =
+    getOverlayEntries(api, overlayRegistryRef).find((entry) => entry?.name === overlayLabel) ??
+    Object.values(api?.layerControl?._layers ?? {}).find(
+      (entry) => entry?.overlay && entry.name === overlayLabel,
+    );
 
   if (!existingEntry?.layer) {
     return { existingEntry: null, wasVisible: false };
@@ -1893,15 +1897,17 @@ function removeOverlayEntry(api, overlayLabel) {
     delete api.layerControl._layers[existingEntry.layer._leaflet_id];
   }
 
+  unregisterOverlayEntry(overlayRegistryRef, overlayLabel);
+
   return { existingEntry, wasVisible };
 }
 
-function removeOverlayEntriesByPrefix(api, prefixes = []) {
+function removeOverlayEntriesByPrefix(api, prefixes = [], overlayRegistryRef) {
   if (!Array.isArray(prefixes) || prefixes.length === 0) {
     return { removedCount: 0, hadVisibleLayer: false };
   }
 
-  const overlayEntries = Object.values(api?.layerControl?._layers ?? {}).filter(
+  const overlayEntries = getOverlayEntries(api, overlayRegistryRef).filter(
     (entry) =>
       entry?.overlay &&
       prefixes.some((prefix) => String(entry.name ?? '').startsWith(prefix)),
@@ -1909,7 +1915,7 @@ function removeOverlayEntriesByPrefix(api, prefixes = []) {
 
   let hadVisibleLayer = false;
   overlayEntries.forEach((entry) => {
-    const { wasVisible } = removeOverlayEntry(api, entry.name);
+    const { wasVisible } = removeOverlayEntry(api, entry.name, overlayRegistryRef);
     if (wasVisible) {
       hadVisibleLayer = true;
     }
@@ -1919,6 +1925,51 @@ function removeOverlayEntriesByPrefix(api, prefixes = []) {
     removedCount: overlayEntries.length,
     hadVisibleLayer,
   };
+}
+
+function getOverlayEntries(api, overlayRegistryRef) {
+  const registryEntries = Array.from(overlayRegistryRef?.current?.values?.() ?? []).filter(
+    (entry) => entry?.overlay,
+  );
+
+  if (registryEntries.length > 0) {
+    return registryEntries;
+  }
+
+  return Object.values(api?.layerControl?._layers ?? {}).filter((entry) => entry?.overlay);
+}
+
+function syncOverlayRegistryFromLayerControl(api, overlayRegistryRef) {
+  if (!overlayRegistryRef?.current) {
+    return;
+  }
+
+  overlayRegistryRef.current.clear();
+  Object.values(api?.layerControl?._layers ?? {}).forEach((entry) => {
+    if (entry?.overlay && entry?.name && entry?.layer) {
+      overlayRegistryRef.current.set(entry.name, entry);
+    }
+  });
+}
+
+function registerOverlayEntry(overlayRegistryRef, name, layer) {
+  if (!overlayRegistryRef?.current || !name || !layer) {
+    return;
+  }
+
+  overlayRegistryRef.current.set(name, {
+    name,
+    layer,
+    overlay: true,
+  });
+}
+
+function unregisterOverlayEntry(overlayRegistryRef, name) {
+  if (!overlayRegistryRef?.current || !name) {
+    return;
+  }
+
+  overlayRegistryRef.current.delete(name);
 }
 
 function collectGeoJsonFeatures(value, collector = []) {
@@ -2156,7 +2207,7 @@ function createVectorOverlayLayer(overlay, geojson) {
       });
 }
 
-async function initializeDrainageNetworkOverlays(api, cityId) {
+async function initializeDrainageNetworkOverlays(api, cityId, overlayRegistryRef) {
   if (!api?.map || !api?.layerControl || !window.L) {
     return [];
   }
@@ -2166,7 +2217,7 @@ async function initializeDrainageNetworkOverlays(api, cityId) {
     return [];
   }
 
-  const { hadVisibleLayer } = removeOverlayEntriesByPrefix(api, removedDrainageOverlayPrefixes);
+  const { hadVisibleLayer } = removeOverlayEntriesByPrefix(api, removedDrainageOverlayPrefixes, overlayRegistryRef);
   const createdLayers = [];
 
   for (const overlay of applicableOverlays) {
@@ -2174,6 +2225,7 @@ async function initializeDrainageNetworkOverlays(api, cityId) {
       (entry) => entry?.overlay && entry.name === overlay.label,
     );
     if (existingEntry?.layer) {
+      registerOverlayEntry(overlayRegistryRef, overlay.label, existingEntry.layer);
       createdLayers.push(existingEntry.layer);
       continue;
     }
@@ -2182,6 +2234,7 @@ async function initializeDrainageNetworkOverlays(api, cityId) {
     const layer = createVectorOverlayLayer(overlay, geojson);
 
     api.layerControl.addOverlay(layer, overlay.label);
+    registerOverlayEntry(overlayRegistryRef, overlay.label, layer);
     if (hadVisibleLayer) {
       api.map.addLayer(layer);
     }
@@ -2192,7 +2245,7 @@ async function initializeDrainageNetworkOverlays(api, cityId) {
   return createdLayers;
 }
 
-async function initializeHydrologyOverlays(api, cityId) {
+async function initializeHydrologyOverlays(api, cityId, overlayRegistryRef) {
   if (!api?.map || !api?.layerControl || !window.L) {
     return [];
   }
@@ -2202,7 +2255,7 @@ async function initializeHydrologyOverlays(api, cityId) {
     return [];
   }
 
-  const { hadVisibleLayer } = removeOverlayEntriesByPrefix(api, removedHydrologyOverlayPrefixes);
+  const { hadVisibleLayer } = removeOverlayEntriesByPrefix(api, removedHydrologyOverlayPrefixes, overlayRegistryRef);
   const createdLayers = [];
 
   for (const overlay of applicableOverlays) {
@@ -2210,6 +2263,7 @@ async function initializeHydrologyOverlays(api, cityId) {
       (entry) => entry?.overlay && entry.name === overlay.label,
     );
     if (existingEntry?.layer) {
+      registerOverlayEntry(overlayRegistryRef, overlay.label, existingEntry.layer);
       createdLayers.push(existingEntry.layer);
       continue;
     }
@@ -2218,6 +2272,7 @@ async function initializeHydrologyOverlays(api, cityId) {
     const layer = createVectorOverlayLayer(overlay, geojson);
 
     api.layerControl.addOverlay(layer, overlay.label);
+    registerOverlayEntry(overlayRegistryRef, overlay.label, layer);
     if (hadVisibleLayer) {
       api.map.addLayer(layer);
     }
@@ -2228,7 +2283,7 @@ async function initializeHydrologyOverlays(api, cityId) {
   return createdLayers;
 }
 
-async function initializeTransportationOverlays(api, cityId) {
+async function initializeTransportationOverlays(api, cityId, overlayRegistryRef) {
   if (!api?.map || !api?.layerControl || !window.L) {
     return [];
   }
@@ -2238,7 +2293,7 @@ async function initializeTransportationOverlays(api, cityId) {
     return [];
   }
 
-  const { hadVisibleLayer } = removeOverlayEntriesByPrefix(api, removedTransportationOverlayPrefixes);
+  const { hadVisibleLayer } = removeOverlayEntriesByPrefix(api, removedTransportationOverlayPrefixes, overlayRegistryRef);
   const createdLayers = [];
 
   for (const overlay of applicableOverlays) {
@@ -2246,6 +2301,7 @@ async function initializeTransportationOverlays(api, cityId) {
       (entry) => entry?.overlay && entry.name === overlay.label,
     );
     if (existingEntry?.layer) {
+      registerOverlayEntry(overlayRegistryRef, overlay.label, existingEntry.layer);
       createdLayers.push(existingEntry.layer);
       continue;
     }
@@ -2254,6 +2310,7 @@ async function initializeTransportationOverlays(api, cityId) {
     const layer = createVectorOverlayLayer(overlay, geojson);
 
     api.layerControl.addOverlay(layer, overlay.label);
+    registerOverlayEntry(overlayRegistryRef, overlay.label, layer);
     if (hadVisibleLayer) {
       api.map.addLayer(layer);
     }
@@ -2313,7 +2370,7 @@ function getAdministrativeOverlayPopupContent(overlay, feature) {
   return buildWardBoundaryPopupContent(feature);
 }
 
-async function initializeAdministrativeBoundaryOverrides(api, cityId) {
+async function initializeAdministrativeBoundaryOverrides(api, cityId, overlayRegistryRef) {
   if (!api?.map || !api?.layerControl || !window.L) {
     return [];
   }
@@ -2336,7 +2393,7 @@ async function initializeAdministrativeBoundaryOverrides(api, cityId) {
 
     const wardGeojson = geojsonCache.get(overlay.url);
     const geojson = getAdministrativeOverlayGeoJson(overlay, wardGeojson);
-    const { wasVisible } = removeOverlayEntry(api, overlay.sourceLabel ?? overlay.label);
+    const { wasVisible } = removeOverlayEntry(api, overlay.sourceLabel ?? overlay.label, overlayRegistryRef);
     let selectedWardLayer = null;
 
     const layer = window.L.geoJSON(geojson, {
@@ -2382,6 +2439,7 @@ async function initializeAdministrativeBoundaryOverrides(api, cityId) {
     }
 
     api.layerControl.addOverlay(layer, overlay.label);
+    registerOverlayEntry(overlayRegistryRef, overlay.label, layer);
     if (wasVisible) {
       api.map.addLayer(layer);
     }
@@ -2413,7 +2471,7 @@ function parseCsvRows(text) {
   });
 }
 
-async function initializeSensorOverlays(api, cityId) {
+async function initializeSensorOverlays(api, cityId, overlayRegistryRef) {
   if (!api?.map || !api?.layerControl || !window.L) {
     return [];
   }
@@ -2432,6 +2490,7 @@ async function initializeSensorOverlays(api, cityId) {
       (entry) => entry?.overlay && entry.name === overlay.label,
     );
     if (existingEntry) {
+      registerOverlayEntry(overlayRegistryRef, overlay.label, existingEntry.layer);
       createdLayers.push(existingEntry.layer);
       continue;
     }
@@ -2477,6 +2536,7 @@ async function initializeSensorOverlays(api, cityId) {
     });
 
     api.layerControl.addOverlay(markerLayer, overlay.label);
+    registerOverlayEntry(overlayRegistryRef, overlay.label, markerLayer);
     api.map.addLayer(markerLayer);
     createdLayers.push(markerLayer);
   }
@@ -2484,9 +2544,9 @@ async function initializeSensorOverlays(api, cityId) {
   return createdLayers;
 }
 
-function buildSections(api, collapsedMap) {
+function buildSections(api, collapsedMap, overlayRegistryRef) {
   const sections = new Map();
-  const overlayEntries = Object.values(api?.layerControl?._layers ?? {}).filter((entry) => entry?.overlay);
+  const overlayEntries = getOverlayEntries(api, overlayRegistryRef);
 
   overlayEntries.forEach((entry) => {
     const fullLabel = entry.name.trim();
@@ -2526,15 +2586,13 @@ function buildSections(api, collapsedMap) {
     .map(({ index, ...section }) => section);
 }
 
-function ensureDefaultVisibleOverlays(api, overlayNames = []) {
-  if (!api?.map || !api?.layerControl?._layers || overlayNames.length === 0) {
+function ensureDefaultVisibleOverlays(api, overlayNames = [], overlayRegistryRef) {
+  if (!api?.map || overlayNames.length === 0) {
     return;
   }
 
   overlayNames.forEach((overlayName) => {
-    const layerEntry = Object.values(api.layerControl._layers).find(
-      (entry) => entry?.overlay && entry.name === overlayName,
-    );
+    const layerEntry = getOverlayEntries(api, overlayRegistryRef).find((entry) => entry?.name === overlayName);
 
     if (layerEntry?.layer && !api.map.hasLayer(layerEntry.layer)) {
       api.map.addLayer(layerEntry.layer);
@@ -2542,14 +2600,12 @@ function ensureDefaultVisibleOverlays(api, overlayNames = []) {
   });
 }
 
-function focusOverlayBounds(api, overlayName) {
-  if (!api?.map || !api?.layerControl?._layers || !overlayName) {
+function focusOverlayBounds(api, overlayName, overlayRegistryRef) {
+  if (!api?.map || !overlayName) {
     return;
   }
 
-  const layerEntry = Object.values(api.layerControl._layers).find(
-    (entry) => entry?.overlay && entry.name === overlayName,
-  );
+  const layerEntry = getOverlayEntries(api, overlayRegistryRef).find((entry) => entry?.name === overlayName);
 
   if (!layerEntry?.layer || typeof layerEntry.layer.getBounds !== 'function') {
     return;
@@ -2609,6 +2665,7 @@ export default function App() {
   const [terrainLegend, setTerrainLegend] = useState(null);
   const mapApiRef = useRef(null);
   const leafletBasemapLayersRef = useRef({ satellite: null, osm: null, cartodb: null });
+  const overlayRegistryRef = useRef(new Map());
   const demOverlayStoreRef = useRef({ byLabel: new Map(), labels: [] });
   const collapsedMapRef = useRef({});
   const swmmTimeseriesLayersRef = useRef({ cityId: null, loaded: false, loadPromise: null, layers: {}, timeLabels: [] });
@@ -2627,7 +2684,7 @@ export default function App() {
       return;
     }
 
-    setSections(buildSections(mapApiRef.current, collapsedMapRef.current));
+    setSections(buildSections(mapApiRef.current, collapsedMapRef.current, overlayRegistryRef));
   };
 
   const refreshDashboardUi = () => {
@@ -2659,6 +2716,7 @@ export default function App() {
     previousSelectedSwmmFeatureRef.current = null;
     activeSwmmPopupLayerRef.current = null;
     demOverlayStoreRef.current = { byLabel: new Map(), labels: [] };
+    overlayRegistryRef.current = new Map();
     setLoading(true);
   }, [selectedCityId]);
 
@@ -2702,25 +2760,27 @@ export default function App() {
       }
 
       mapApiRef.current = api;
+      syncOverlayRegistryFromLayerControl(api, overlayRegistryRef);
       applyInitialCityView(api, selectedCity);
       detachNativeLayerControl(api);
       removedAdministrativeOverlayLabels.forEach((overlayLabel) => {
-        removeOverlayEntry(api, overlayLabel);
+        removeOverlayEntry(api, overlayLabel, overlayRegistryRef);
       });
-      removeOverlayEntriesByPrefix(api, removedDashboardOverlayPrefixes);
+      removeOverlayEntriesByPrefix(api, removedDashboardOverlayPrefixes, overlayRegistryRef);
       setLoadingMessage(`Preparing ${selectedCity.loadingLabel} basemap and overlays...`);
-      await initializeAdministrativeBoundaryOverrides(api, selectedCity.id);
-      await initializeDrainageNetworkOverlays(api, selectedCity.id);
-      await initializeHydrologyOverlays(api, selectedCity.id);
-      await initializeTransportationOverlays(api, selectedCity.id);
+      await initializeAdministrativeBoundaryOverrides(api, selectedCity.id, overlayRegistryRef);
+      await initializeDrainageNetworkOverlays(api, selectedCity.id, overlayRegistryRef);
+      await initializeHydrologyOverlays(api, selectedCity.id, overlayRegistryRef);
+      await initializeTransportationOverlays(api, selectedCity.id, overlayRegistryRef);
       await initializeDemOverlays(
         api,
         selectedCity.demOverlays ?? selectedCity.demOverlay,
         demOverlayStoreRef,
+        overlayRegistryRef,
         demOpacity,
       );
-      ensureDefaultVisibleOverlays(api, selectedCity.defaultVisibleOverlays);
-      focusOverlayBounds(api, selectedCity.initialFocusOverlay);
+      ensureDefaultVisibleOverlays(api, selectedCity.defaultVisibleOverlays, overlayRegistryRef);
+      focusOverlayBounds(api, selectedCity.initialFocusOverlay, overlayRegistryRef);
       applyBasemapSelection(api, leafletBasemapLayersRef, basemapType);
       cleanupPopupSanitizer = attachPopupSanitizer(api);
       syncSections();
@@ -2757,6 +2817,7 @@ export default function App() {
       activeSwmmPopupLayerRef.current = null;
       leafletBasemapLayersRef.current = { satellite: null, osm: null, cartodb: null };
       demOverlayStoreRef.current = { byLabel: new Map(), labels: [] };
+      overlayRegistryRef.current = new Map();
     };
   }, [selectedCity]);
 
@@ -2819,13 +2880,11 @@ export default function App() {
 
   const handleToggleLayer = (fullLabel) => {
     const api = mapApiRef.current;
-    if (!api?.map || !api?.layerControl?._layers) {
+    if (!api?.map) {
       return;
     }
 
-    const layerEntry = Object.values(api.layerControl._layers).find(
-      (entry) => entry?.overlay && entry.name === fullLabel,
-    );
+    const layerEntry = getOverlayEntries(api, overlayRegistryRef).find((entry) => entry?.name === fullLabel);
 
     if (!layerEntry?.layer) {
       return;
@@ -2851,11 +2910,11 @@ export default function App() {
 
   const handleUntickAll = () => {
     const api = mapApiRef.current;
-    if (!api?.map || !api?.layerControl?._layers) {
+    if (!api?.map) {
       return;
     }
 
-    Object.values(api.layerControl._layers).forEach((entry) => {
+    getOverlayEntries(api, overlayRegistryRef).forEach((entry) => {
       if (entry?.overlay && entry.layer && api.map.hasLayer(entry.layer)) {
         api.map.removeLayer(entry.layer);
       }

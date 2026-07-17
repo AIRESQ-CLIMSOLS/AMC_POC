@@ -819,6 +819,10 @@ input {
   display: none !important;
 }
 
+.leaflet-control-layers {
+  display: none !important;
+}
+
 .leaflet-container {
   background: transparent !important;
   font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
