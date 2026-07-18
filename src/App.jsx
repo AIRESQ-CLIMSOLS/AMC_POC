@@ -584,9 +584,19 @@ async function initializeDemOverlays(api, demOverlayConfigs, demOverlayStoreRef,
 
   const createdLayers = [];
   for (const config of configs) {
-    const layer = await initializeDemOverlay(api, config, demOverlayStoreRef, overlayRegistryRef, defaultOpacity);
-    if (layer) {
-      createdLayers.push(layer);
+    try {
+      const layer = await initializeDemOverlay(
+        api,
+        config,
+        demOverlayStoreRef,
+        overlayRegistryRef,
+        defaultOpacity,
+      );
+      if (layer) {
+        createdLayers.push(layer);
+      }
+    } catch (error) {
+      console.warn(`Skipping DEM overlay "${config?.label ?? 'unknown'}":`, error);
     }
   }
 
