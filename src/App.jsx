@@ -536,7 +536,7 @@ async function initializeDemOverlay(api, demOverlayConfig, demOverlayStoreRef, o
     return existingEntry.layer;
   }
 
-  const response = await fetch(demOverlayConfig.metadataUrl);
+  const response = await fetch(resolveAssetUrl(demOverlayConfig.metadataUrl));
   if (!response.ok) {
     throw new Error('DEM metadata could not be loaded.');
   }
@@ -555,7 +555,7 @@ async function initializeDemOverlay(api, demOverlayConfig, demOverlayStoreRef, o
     [metadata.bounds.north, metadata.bounds.east],
   ];
 
-  const demLayer = window.L.imageOverlay(demOverlayConfig.imageUrl, bounds, {
+  const demLayer = window.L.imageOverlay(resolveAssetUrl(demOverlayConfig.imageUrl), bounds, {
     pane: paneName,
     opacity: defaultOpacity,
     interactive: false,
